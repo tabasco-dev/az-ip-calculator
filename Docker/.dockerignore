@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+node_modules/
+.git
+.gitignore
+.dist-info
+*.egg-info
+.DS_Store
+build/
+dist/
+*.log

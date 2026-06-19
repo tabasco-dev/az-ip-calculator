@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Calculadora de IPs Azure</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="container">
+      <h1>Calculadora de IPs - Azure</h1>
+
+      <div class="calculator">
+        <div class="display">
+          <input id="ipInput" placeholder="Introduce IP (ej. 10.0.0.0)" />
+          <select id="cidrSelect">
+            <!-- options inserted by JS -->
+          </select>
+        </div>
+
+        <div class="pad" id="pad">
+          <button class="btn">1</button>
+          <button class="btn">2</button>
+          <button class="btn">3</button>
+          <button class="btn">4</button>
+          <button class="btn">5</button>
+          <button class="btn">6</button>
+          <button class="btn">7</button>
+          <button class="btn">8</button>
+          <button class="btn">9</button>
+          <button class="btn">.</button>
+          <button class="btn">0</button>
+          <button class="btn" id="del">⌫</button>
+        </div>
+
+        <div class="actions">
+          <button id="calcBtn" class="primary">Calcular</button>
+          <button id="clearBtn">Limpiar</button>
+        </div>
+
+        <div id="result" class="result"></div>
+      </div>
+    </main>
+
+    <script src="/static/script.js"></script>
+  </body>
+</html>

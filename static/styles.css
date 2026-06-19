@@ -1,0 +1,22 @@
+:root{
+  --bg:#f6fbff;
+  --card:#ffffff;
+  --accent:#2b6cb0;
+  --muted:#6b7280;
+}
+*{box-sizing:border-box;font-family:Inter, system-ui, Arial, sans-serif}
+body{margin:0;background:var(--bg);color:#111}
+.container{max-width:720px;margin:36px auto;padding:24px}
+h1{margin:0 0 18px;font-size:24px;color:var(--accent)}
+.calculator{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(20,20,50,0.06)}
+.display{display:flex;gap:8px;margin-bottom:12px}
+.display input{flex:1;padding:12px;border:1px solid #e6edf3;border-radius:8px;font-size:16px}
+.display select{width:110px;padding:12px;border-radius:8px;border:1px solid #e6edf3}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.btn{padding:14px;border-radius:8px;background:#f1f5f9;border:1px solid #e6edf3;font-size:16px}
+.btn:active{transform:translateY(1px)}
+.actions{display:flex;gap:8px}
+.primary{background:var(--accent);color:#fff;padding:10px 14px;border-radius:8px;border:none}
+.result{margin-top:14px;padding:12px;border-radius:8px;background:#f8fafc;border:1px solid #eef3f8}
+.reserved-list{margin:8px 0;padding:8px;background:#fff;border-radius:6px}
+.muted{color:var(--muted)}

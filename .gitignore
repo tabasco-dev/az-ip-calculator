@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+
+# Editor files
+.vscode/
+*.swp
+*~
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
