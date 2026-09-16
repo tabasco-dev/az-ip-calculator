@@ -15,17 +15,39 @@ def configure_logger():
         ))
         logger.addHandler(handler)
 
-    logger.setLevel(os.getenv('LOG_LEVEL', 'INFO').upper())
+    log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_name, None)
+    if not isinstance(log_level, int):
+        log_level = logging.INFO
+        logger.warning(
+            "invalid_log_level configured_level=%s fallback_level=INFO",
+            log_level_name,
+        )
+
+    logger.setLevel(log_level)
     logger.propagate = False
     return logger
+
+
+def is_truthy(value):
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def get_client_ip():
+    if is_truthy(os.getenv('TRUST_PROXY_HEADERS')) and request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+
+    return request.remote_addr or 'unknown'
 
 
 logger = configure_logger()
 
 app = Flask(__name__)
-app.logger.handlers = logger.handlers
 app.logger.setLevel(logger.level)
 app.logger.propagate = False
+for handler in logger.handlers:
+    if handler not in app.logger.handlers:
+        app.logger.addHandler(handler)
 
 logger.info("application_startup status=starting")
 
@@ -72,8 +94,7 @@ def index():
 
 @app.route('/api/calc', methods=['POST'])
 def api_calc():
-    forwarded_for = request.headers.get('X-Forwarded-For', '')
-    client_ip = forwarded_for.split(',')[0].strip() or request.remote_addr or 'unknown'
+    client_ip = get_client_ip()
     cidr = None
     try:
         data = request.json or {}
@@ -103,13 +124,14 @@ def api_calc():
         try:
             network = ipaddress.ip_network(f"{ip}/{cidr}", strict=False)
         except Exception as e:
+            detail = f"'{ip}/{cidr}' does not appear to be an IPv4 or IPv6 network"
             logger.warning(
                 "calc_request_validation_failed client_ip=%s cidr=%s reason=invalid_network detail=%s",
                 client_ip,
                 cidr,
                 str(e),
             )
-            return jsonify({'error': 'IP o CIDR inválido', 'detail': str(e)}), 400
+            return jsonify({'error': 'IP o CIDR inválido', 'detail': detail}), 400
 
         # Ensure the network is fully within IANA private ranges (RFC1918)
         private_blocks = [
@@ -193,7 +215,7 @@ def api_calc():
             client_ip,
             cidr,
         )
-        raise
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 if __name__ == '__main__':
