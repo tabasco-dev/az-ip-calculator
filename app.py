@@ -1,7 +1,55 @@
-from flask import Flask, render_template, request, jsonify
 import ipaddress
+import logging
+import os
+import sys
+
+from flask import Flask, jsonify, render_template, request
+
+
+def configure_logger():
+    logger = logging.getLogger(__name__)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s %(name)s %(message)s'
+        ))
+        logger.addHandler(handler)
+
+    log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_name, None)
+    if not isinstance(log_level, int):
+        log_level = logging.INFO
+        logger.warning(
+            "invalid_log_level configured_level=%s fallback_level=INFO",
+            log_level_name,
+        )
+
+    logger.setLevel(log_level)
+    logger.propagate = False
+    return logger
+
+
+def is_truthy(value):
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def get_client_ip():
+    if is_truthy(os.getenv('TRUST_PROXY_HEADERS')) and request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+
+    return request.remote_addr or 'unknown'
+
+
+logger = configure_logger()
 
 app = Flask(__name__)
+app.logger.setLevel(logger.level)
+app.logger.propagate = False
+for handler in logger.handlers:
+    if handler not in app.logger.handlers:
+        app.logger.addHandler(handler)
+
+logger.info("application_startup status=starting")
 
 
 def calculate_azure_reserved(network: ipaddress.IPv4Network):
@@ -46,86 +94,129 @@ def index():
 
 @app.route('/api/calc', methods=['POST'])
 def api_calc():
-    data = request.json or {}
-    ip = data.get('ip', '').strip()
-    cidr = data.get('cidr')
-    if not ip or cidr is None:
-        return jsonify({'error': 'Falta IP o CIDR'}), 400
+    client_ip = get_client_ip()
+    cidr = None
     try:
-        cidr = int(cidr)
-        if cidr < 0 or cidr > 32:
-            raise ValueError()
-    except Exception:
-        return jsonify({'error': 'CIDR inválido'}), 400
+        data = request.json or {}
+        ip = data.get('ip', '').strip()
+        cidr = data.get('cidr')
 
-    try:
-        network = ipaddress.ip_network(f"{ip}/{cidr}", strict=False)
-    except Exception as e:
-        return jsonify({'error': 'IP o CIDR inválido', 'detail': str(e)}), 400
-    # Ensure the network is fully within IANA private ranges (RFC1918)
-    private_blocks = [
-        ipaddress.ip_network('10.0.0.0/8'),
-        ipaddress.ip_network('172.16.0.0/12'),
-        ipaddress.ip_network('192.168.0.0/16')
-    ]
+        if not ip or cidr is None:
+            logger.warning(
+                "calc_request_validation_failed client_ip=%s cidr=%s reason=missing_ip_or_cidr",
+                client_ip,
+                cidr,
+            )
+            return jsonify({'error': 'Falta IP o CIDR'}), 400
 
-    contained_in_private = False
-    class_label = None
-    for blk, cls in zip(private_blocks, ['A', 'B', 'C']):
-        if (network.network_address >= blk.network_address) and (network.broadcast_address <= blk.broadcast_address):
-            contained_in_private = True
-            class_label = cls
-            break
+        try:
+            cidr = int(cidr)
+            if cidr < 0 or cidr > 32:
+                raise ValueError()
+        except Exception:
+            logger.warning(
+                "calc_request_validation_failed client_ip=%s cidr=%s reason=invalid_cidr",
+                client_ip,
+                cidr,
+            )
+            return jsonify({'error': 'CIDR inválido'}), 400
 
-    if not contained_in_private:
-        return jsonify({'error': 'This is not a private IP range based on IANA IP ranges'}), 400
+        try:
+            network = ipaddress.ip_network(f"{ip}/{cidr}", strict=False)
+        except Exception as e:
+            detail = f"'{ip}/{cidr}' does not appear to be an IPv4 or IPv6 network"
+            logger.warning(
+                "calc_request_validation_failed client_ip=%s cidr=%s reason=invalid_network detail=%s",
+                client_ip,
+                cidr,
+                str(e),
+            )
+            return jsonify({'error': 'IP o CIDR inválido', 'detail': detail}), 400
 
-    total = network.num_addresses
-    reserved = calculate_azure_reserved(network)
-    # usable addresses after Azure reservations
-    usable = max(0, total - len(reserved))
+        # Ensure the network is fully within IANA private ranges (RFC1918)
+        private_blocks = [
+            ipaddress.ip_network('10.0.0.0/8'),
+            ipaddress.ip_network('172.16.0.0/12'),
+            ipaddress.ip_network('192.168.0.0/16')
+        ]
 
-    # build set of reserved addresses for quick checks
-    reserved_set = set([addr for (_label, addr) in reserved])
-
-    # determine first available by searching from network.network_address + 1 upward
-    first_available = None
-    try:
-        candidate = network.network_address + 1
-        # Skip reserved and network address itself
-        while candidate <= network.broadcast_address:
-            if candidate not in reserved_set and candidate != network.network_address and candidate != network.broadcast_address:
-                # also ensure candidate is within network
-                if candidate >= network.network_address and candidate <= network.broadcast_address:
-                    first_available = str(candidate)
-                    break
-            candidate += 1
-    except Exception:
-        first_available = None
-
-    # determine last available by searching backward from broadcast -1
-    last_available = None
-    try:
-        candidate = network.broadcast_address - 1
-        while candidate >= network.network_address:
-            if candidate not in reserved_set and candidate != network.network_address and candidate != network.broadcast_address:
-                last_available = str(candidate)
+        contained_in_private = False
+        class_label = None
+        for blk, cls in zip(private_blocks, ['A', 'B', 'C']):
+            if (network.network_address >= blk.network_address) and (network.broadcast_address <= blk.broadcast_address):
+                contained_in_private = True
+                class_label = cls
                 break
-            candidate -= 1
-    except Exception:
-        last_available = None
 
-    result = {
-        'network': str(network.with_prefixlen),
-        'class': class_label,
-        'total_addresses': total,
-        'usable_addresses': usable,
-        'first_available': first_available,
-        'last_available': last_available,
-        'reserved': [{'label': t[0], 'ip': str(t[1])} for t in reserved]
-    }
-    return jsonify(result)
+        if not contained_in_private:
+            logger.warning(
+                "calc_request_validation_failed client_ip=%s cidr=%s reason=non_private_range network=%s",
+                client_ip,
+                cidr,
+                str(network.with_prefixlen),
+            )
+            return jsonify({'error': 'This is not a private IP range based on IANA IP ranges'}), 400
+
+        total = network.num_addresses
+        reserved = calculate_azure_reserved(network)
+        # usable addresses after Azure reservations
+        usable = max(0, total - len(reserved))
+
+        # build set of reserved addresses for quick checks
+        reserved_set = set([addr for (_label, addr) in reserved])
+
+        # determine first available by searching from network.network_address + 1 upward
+        first_available = None
+        try:
+            candidate = network.network_address + 1
+            # Skip reserved and network address itself
+            while candidate <= network.broadcast_address:
+                if candidate not in reserved_set and candidate != network.network_address and candidate != network.broadcast_address:
+                    # also ensure candidate is within network
+                    if candidate >= network.network_address and candidate <= network.broadcast_address:
+                        first_available = str(candidate)
+                        break
+                candidate += 1
+        except Exception:
+            first_available = None
+
+        # determine last available by searching backward from broadcast -1
+        last_available = None
+        try:
+            candidate = network.broadcast_address - 1
+            while candidate >= network.network_address:
+                if candidate not in reserved_set and candidate != network.network_address and candidate != network.broadcast_address:
+                    last_available = str(candidate)
+                    break
+                candidate -= 1
+        except Exception:
+            last_available = None
+
+        result = {
+            'network': str(network.with_prefixlen),
+            'class': class_label,
+            'total_addresses': total,
+            'usable_addresses': usable,
+            'first_available': first_available,
+            'last_available': last_available,
+            'reserved': [{'label': t[0], 'ip': str(t[1])} for t in reserved]
+        }
+        logger.info(
+            "calc_request_succeeded client_ip=%s cidr=%s network=%s usable_addresses=%s",
+            client_ip,
+            cidr,
+            result['network'],
+            usable,
+        )
+        return jsonify(result)
+    except Exception:
+        logger.exception(
+            "calc_request_failed client_ip=%s cidr=%s status=error",
+            client_ip,
+            cidr,
+        )
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
